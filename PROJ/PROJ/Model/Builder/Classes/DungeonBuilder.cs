@@ -1,5 +1,6 @@
 using PROJ.Enemies;
 using PROJ.Enemies.Death_Reaction_Strategies;
+using PROJ.Enemies.MovementStrategies;
 using PROJ.Enemies.Species;
 using PROJ.GameConstansts;
 using PROJ.Tools.Classes;
@@ -762,8 +763,17 @@ public class DungeonBuilder : IDungeonBuilder
     public void AddEnemies(int count, Func<Enemy>[]? enemies = null)
     {
         _pmb.AddEnemy(); // TODO Add Enemy
-        SpeciesGroup human = new SpeciesGroup("Human", new AngryStrategy());
-        SpeciesGroup animal = new SpeciesGroup("Animal", new ScaredStrategy());
+        SpeciesGroup human = new SpeciesGroup(
+            "Human",
+            new AngryStrategy(),
+            new FollowSoundReaction(),
+            new FollowPlayerReaction(),
+            new[] { EnemyBehaviorTrigger.Sound, EnemyBehaviorTrigger.Player });
+        SpeciesGroup animal = new SpeciesGroup(
+            "Animal",
+            new ScaredStrategy(),
+            new FleeSoundReaction(),
+            new FleePlayerReaction());
         if (enemies == null)
         {
             enemies = new Func<Enemy>[]

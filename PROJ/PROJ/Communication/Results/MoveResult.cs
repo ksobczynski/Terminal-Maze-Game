@@ -11,6 +11,9 @@ public class MoveResult
     private TileViewResult? _toTile;
     private ActionBoxResult? _actionBoxResult;
     private EnemyViewResult? _nearbyEnemy;
+    private int _playerDamage;
+    private bool _refreshPlayerVitals;
+    private bool _playerDead;
 
     public MoveResult(int from_x, int from_y, int to_x, int to_y, bool success)
     {
@@ -25,6 +28,9 @@ public class MoveResult
     public TileViewResult? ToTile => _toTile;
     public ActionBoxResult? ActionBoxResult => _actionBoxResult;
     public EnemyViewResult? NearbyEnemy => _nearbyEnemy;
+    public int PlayerDamage => _playerDamage;
+    public bool RefreshPlayerVitals => _refreshPlayerVitals;
+    public bool PlayerDead => _playerDead;
 
     public void SetRenderedTiles(TileViewResult fromTile, TileViewResult toTile)
     {
@@ -36,5 +42,12 @@ public class MoveResult
     {
         _actionBoxResult = actionBoxResult;
         _nearbyEnemy = nearbyEnemy;
+    }
+
+    public void SetPlayerDamageContext(int damage, bool playerDead)
+    {
+        _playerDamage = damage;
+        _refreshPlayerVitals = true;
+        _playerDead = playerDead;
     }
 }

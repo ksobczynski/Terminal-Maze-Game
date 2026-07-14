@@ -24,6 +24,8 @@ public class Board
 
 
     private List<Enemy> enemies = new();
+    private readonly Random enemyRandom = new();
+    private const int EnemySightRange = 6;
 
     private sealed class FightState
     {
@@ -41,11 +43,193 @@ public class Board
     
 
 
+    private static readonly (int X, int Y)[] MovementDirections =
+    {
+        (0, -1),
+        (1, 0),
+        (0, 1),
+        (-1, 0)
+    };
+
+    private static bool IsInsideWalkableArea(int x, int y)
+    {
+        return x > 0 && x < GameConstants.Width - 1 && y > 0 && y < GameConstants.Height - 1;
+    }
+
     private bool CanMove(int x, int y)
     {
-        if (x >= GameConstants.Width-1 || x <= 0 || y >= GameConstants.Height-1 || y <= 0)
+        if (!IsInsideWalkableArea(x, y))
             return false;
         return !Tiles[y, x].BlocksMovement && !IsOccupiedByPlayer(x, y, _player);
+    }
+
+    public (int X, int Y)? GetNextStepOnShortestPath(int startX, int startY, int endX, int endY)
+    {
+        if (Tiles == null)
+            return null;
+        if (!IsInsideWalkableArea(startX, startY) || !CanMove(endX, endY))
+            return null;
+        if (startX == endX && startY == endY)
+            return null;
+
+        var start = (X: startX, Y: startY);
+        var end = (X: endX, Y: endY);
+        return GetNextStepToAnyTarget(start, new HashSet<(int X, int Y)> { end }, CanMove);
+    }
+
+    private bool CanEnemyMoveTo(int x, int y)
+    {
+        if (!IsInsideWalkableArea(x, y))
+            return false;
+
+        return Tiles[y, x].IsEmpty && !IsOccupiedByPlayer(x, y);
+    }
+
+    public (int X, int Y)? GetBestEnemyEscapeDestination(int startX, int startY, int threatX, int threatY)
+    {
+        int currentDistance = ManhattanDistance(startX, startY, threatX, threatY);
+        int bestDistance = currentDistance;
+        (int X, int Y)? bestDestination = null;
+
+        foreach (var direction in MovementDirections)
+        {
+            int nextX = startX + direction.X;
+            int nextY = startY + direction.Y;
+
+            if (!CanEnemyMoveTo(nextX, nextY))
+                continue;
+
+            int distance = ManhattanDistance(nextX, nextY, threatX, threatY);
+            if (distance <= bestDistance)
+                continue;
+
+            bestDistance = distance;
+            bestDestination = (nextX, nextY);
+        }
+
+        return bestDestination;
+    }
+
+    public Player? GetNearestVisiblePlayer(Enemy enemy)
+    {
+        Player? nearest = null;
+        int nearestDistance = int.MaxValue;
+
+        foreach (var direction in MovementDirections)
+        {
+            for (int distance = 1; distance <= EnemySightRange; distance++)
+            {
+                int x = enemy.BoardX + direction.X * distance;
+                int y = enemy.BoardY + direction.Y * distance;
+
+                if (!IsInsideWalkableArea(x, y))
+                    break;
+                if (Tiles[y, x].BlocksMovement)
+                    break;
+
+                Player? player = GetPlayerAt(x, y);
+                if (player == null || distance >= nearestDistance)
+                    continue;
+
+                nearest = player;
+                nearestDistance = distance;
+                break;
+            }
+        }
+
+        return nearest;
+    }
+
+    private (int X, int Y)? GetNextEnemyStepToDestination(Enemy enemy)
+    {
+        if (enemy.Destination == null)
+            return null;
+
+        var start = (X: enemy.BoardX, Y: enemy.BoardY);
+        var destination = enemy.Destination.Value;
+
+        if (!IsInsideWalkableArea(destination.X, destination.Y))
+            return null;
+        if (start == destination)
+            return null;
+
+        HashSet<(int X, int Y)> targets = new();
+        if (CanEnemyMoveTo(destination.X, destination.Y))
+        {
+            targets.Add(destination);
+        }
+        else
+        {
+            foreach (var direction in MovementDirections)
+            {
+                var candidate = (X: destination.X + direction.X, Y: destination.Y + direction.Y);
+
+                if (candidate == start)
+                    return null;
+                if (CanEnemyMoveTo(candidate.X, candidate.Y))
+                    targets.Add(candidate);
+            }
+        }
+
+        if (targets.Count == 0)
+            return null;
+
+        return GetNextStepToAnyTarget(start, targets, CanEnemyMoveTo);
+    }
+
+    private static int ManhattanDistance(int firstX, int firstY, int secondX, int secondY)
+    {
+        return Math.Abs(firstX - secondX) + Math.Abs(firstY - secondY);
+    }
+
+    private (int X, int Y)? GetNextStepToAnyTarget(
+        (int X, int Y) start,
+        HashSet<(int X, int Y)> targets,
+        Func<int, int, bool> canEnter)
+    {
+        Queue<(int X, int Y)> queue = new();
+        Dictionary<(int X, int Y), (int X, int Y)> previous = new();
+
+        queue.Enqueue(start);
+        previous[start] = start;
+
+        while (queue.Count > 0)
+        {
+            var current = queue.Dequeue();
+
+            if (targets.Contains(current))
+                return GetFirstStep(start, current, previous);
+
+            foreach (var direction in MovementDirections)
+            {
+                var next = (X: current.X + direction.X, Y: current.Y + direction.Y);
+
+                if (previous.ContainsKey(next) || !canEnter(next.X, next.Y))
+                    continue;
+
+                previous[next] = current;
+                queue.Enqueue(next);
+            }
+        }
+
+        return null;
+    }
+    
+    private static (int X, int Y)? GetFirstStep(
+        (int X, int Y) start,
+        (int X, int Y) end,
+        Dictionary<(int X, int Y), (int X, int Y)> previous)
+    {
+        if (start == end)
+            return null;
+
+        var step = end;
+        while (previous[step] != start)
+        {
+            step = previous[step];
+        }
+
+        return step;
     }
 
     private int CurrentSeek
@@ -629,73 +813,129 @@ public class Board
 
     private MoveResult? EnemyMove(Enemy e)
     {
-        Random rnd = new Random();
-        int x = rnd.Next(0, 100);
+        Player? adjacentPlayer = GetAdjacentActivePlayer(e);
+        if (adjacentPlayer != null)
+            return EnemyAttack(e, adjacentPlayer);
+
+        MoveResult? destinationMove = MoveEnemyTowardsDestination(e);
+        if (destinationMove != null)
+        {
+            adjacentPlayer = GetAdjacentActivePlayer(e);
+            if (adjacentPlayer != null)
+                ApplyEnemyAttack(e, adjacentPlayer, destinationMove);
+
+            return destinationMove;
+        }
+
+        if (destinationMove != null || e.Destination != null)
+            return destinationMove;
+
+        MoveResult? randomMove = RandomEnemyMove(e);
+        if (randomMove != null)
+        {
+            adjacentPlayer = GetAdjacentActivePlayer(e);
+            if (adjacentPlayer != null)
+                ApplyEnemyAttack(e, adjacentPlayer, randomMove);
+        }
+
+        return randomMove;
+    }
+
+    private MoveResult? MoveEnemyTowardsDestination(Enemy e)
+    {
+        if (e.Destination == null)
+            return null;
+
+        var nextStep = GetNextEnemyStepToDestination(e);
+        if (nextStep == null)
+        {
+            if (IsEnemyAdjacentToDestination(e))
+                return null;
+
+            e.ClearDestination();
+            return null;
+        }
+
+        return MoveEnemyTo(e, nextStep.Value.Y, nextStep.Value.X);
+    }
+
+    private MoveResult? RandomEnemyMove(Enemy e)
+    {
+        int x = enemyRandom.Next(0, 100);
         if (x < 33)
             return null;
-        x = rnd.Next(0, 4);
 
-        MoveResult? move = null;
-        switch (x)
-        {
-            case 0:
-            {
-                if (e.X == 0 || !Tiles[e.X - 1, e.Y].IsEmpty || IsOccupiedByPlayer(e.Y, e.X - 1))
-                    return null;
-                int oldRow = e.X;
-                int oldColumn = e.Y;
-                Tiles[oldRow, oldColumn].Reset();
-                e.X--;
-                Tiles[e.X, e.Y].AddObj(e);
-                move =  new MoveResult(oldColumn, oldRow, e.Y, e.X, true);
-                break;
-            }
-            case 1:
-            {
-                if (e.Y == GameConstants.Width - 1 || !Tiles[e.X, e.Y + 1].IsEmpty || IsOccupiedByPlayer(e.Y + 1, e.X))
-                    return null;
-                int oldRow = e.X;
-                int oldColumn = e.Y;
-                Tiles[oldRow, oldColumn].Reset();
-                e.Y++;
-                Tiles[e.X, e.Y].AddObj(e);
-                move =  new MoveResult(oldColumn, oldRow, e.Y, e.X, true);
-                break;
-            }
-            case 2:
-            {
-                if (e.X == GameConstants.Height - 1 || !Tiles[e.X + 1, e.Y].IsEmpty || IsOccupiedByPlayer(e.Y, e.X + 1))
-                    return null;
-                int oldRow = e.X;
-                int oldColumn = e.Y;
-                Tiles[oldRow, oldColumn].Reset();
-                e.X++;
-                Tiles[e.X, e.Y].AddObj(e);
-                move =  new MoveResult(oldColumn, oldRow, e.Y, e.X, true);
-                break;
-            }
-            case 3:
-            {
-                if (e.Y == 0 || !Tiles[e.X, e.Y - 1].IsEmpty || IsOccupiedByPlayer(e.Y - 1, e.X))
-                    return null;
-                int oldRow = e.X;
-                int oldColumn = e.Y;
-                Tiles[oldRow, oldColumn].Reset();
-                e.Y--;
-                Tiles[e.X, e.Y].AddObj(e);
-                move =  new MoveResult(oldColumn, oldRow, e.Y, e.X, true);
-                break;
-            }
-        }
-        return move;
-
-
+        var direction = MovementDirections[enemyRandom.Next(0, MovementDirections.Length)];
+        return MoveEnemyTo(e, e.X + direction.Y, e.Y + direction.X);
     }
+
+    private MoveResult? MoveEnemyTo(Enemy e, int newRow, int newColumn)
+    {
+        if (!CanEnemyMoveTo(newColumn, newRow))
+            return null;
+
+        int oldRow = e.X;
+        int oldColumn = e.Y;
+        Tiles[oldRow, oldColumn].Reset();
+
+        e.SetDirection(newColumn - oldColumn, newRow - oldRow);
+        e.X = newRow;
+        e.Y = newColumn;
+        Tiles[e.X, e.Y].AddObj(e);
+
+        e.ClearSoundIfSourceReached();
+        if (e.Destination != null && e.Destination.Value.X == e.BoardX && e.Destination.Value.Y == e.BoardY)
+            e.ClearDestination();
+
+        return new MoveResult(oldColumn, oldRow, e.Y, e.X, true);
+    }
+
+    private Player? GetAdjacentActivePlayer(Enemy e)
+    {
+        if (_player.Dead())
+            return null;
+
+        foreach (var direction in MovementDirections)
+        {
+            int x = e.BoardX + direction.X;
+            int y = e.BoardY + direction.Y;
+
+            if (_player.Position[0] == x && _player.Position[1] == y)
+                return _player;
+        }
+
+        return null;
+    }
+
+    private MoveResult EnemyAttack(Enemy e, Player player)
+    {
+        MoveResult result = new MoveResult(e.Y, e.X, e.Y, e.X, false);
+        ApplyEnemyAttack(e, player, result);
+        return result;
+    }
+
+    private static void ApplyEnemyAttack(Enemy e, Player player, MoveResult result)
+    {
+        e.Attack(player, 0);
+        Logger.GetInstance.Log($"{e.Name} Attacked {player.Name} with {e.Damage} damage");
+        result.SetPlayerDamageContext(e.Damage, player.Dead());
+    }
+
+    private static bool IsEnemyAdjacentToDestination(Enemy e)
+    {
+        if (e.Destination == null)
+            return false;
+
+        var destination = e.Destination.Value;
+        return ManhattanDistance(e.BoardX, e.BoardY, destination.X, destination.Y) == 1;
+    }
+
     private List<MoveResult> EnemiesTurn()
     {
         var list = new List<MoveResult>();
         foreach (var enemy in enemies)
         {
+            enemy.RefreshDestination();
             var res = EnemyMove(enemy);
             if(res != null)
                 list.Add(res);

@@ -1,6 +1,7 @@
 using System.ComponentModel.DataAnnotations;
 using PROJ.Communication.Results;
 using PROJ.Enemies.Interfaces;
+using PROJ.Enemies.MovementStrategies;
 using PROJ.Enemies.Species;
 using PROJ.Enemies.Species.Interfaces;
 using PROJ.GameConstansts;
@@ -17,7 +18,15 @@ public abstract class Enemy : BoardObject, ISpeciesObserver, ISoundReceiver
     protected char vis;
     protected string name;
     protected SpeciesGroup? speciesGroup;
+    private SoundMessage? _lastSound;
     protected Board EnemyBoard;
+    public ISoundReaction CurrentSoundReaction { get; private set; }
+    public IPlayerReaction CurrentPlayerReaction { get; private set; }
+    public (int X, int Y)? Destination { get; private set; }
+    public int[]? Direction { get; private set; }
+    public int BoardX => Y;
+    public int BoardY => X;
+    public SoundMessage? LastSound => _lastSound;
     public override bool Blocker => true;
     public override bool Pickupable => false;
     public override PickUpResult? PickUp(Player player) // to do zmiany TODO
@@ -33,10 +42,15 @@ public abstract class Enemy : BoardObject, ISpeciesObserver, ISoundReceiver
         _damage = damage;
         this.vis = vis;
         this.name = name;
+        CurrentSoundReaction = new IgnoreSoundReaction();
+        CurrentPlayerReaction = new IgnorePlayerReaction();
+        Direction = null;
+        Destination = null;
         if (speciesGroup != null)
         {
             this.speciesGroup = speciesGroup;
             this.speciesGroup.Subscribe(this);
+            this.speciesGroup.AssignBehavior(this);
         }
 
         var messageBus = PickUpSoundBus.GetInstance;
@@ -122,10 +136,58 @@ public abstract class Enemy : BoardObject, ISpeciesObserver, ISoundReceiver
         
     }
 
+    public void SetReactions(ISoundReaction soundReaction, IPlayerReaction playerReaction)
+    {
+        CurrentSoundReaction = soundReaction;
+        CurrentPlayerReaction = playerReaction;
+    }
+
+    public void SetDestination(int x, int y)
+    {
+        Destination = (x, y);
+        SetDirection(Math.Sign(x - BoardX), Math.Sign(y - BoardY));
+    }
+
+    public void ClearDestination()
+    {
+        Destination = null;
+        Direction = null;
+    }
+
+    public void SetDirection(int x, int y)
+    {
+        Direction = x == 0 && y == 0 ? null : new[] { x, y };
+    }
+
+    public void RefreshDestination()
+    {
+        Player? visiblePlayer = EnemyBoard.GetNearestVisiblePlayer(this);
+        if (speciesGroup == null)
+        {
+            ClearDestination();
+            return;
+        }
+
+        speciesGroup.RefreshDestination(this, visiblePlayer, _lastSound, EnemyBoard);
+    }
+
+    public void ClearSound()
+    {
+        _lastSound = null;
+    }
+
+    public void ClearSoundIfSourceReached()
+    {
+        if (_lastSound != null && BoardX == _lastSound.GetX && BoardY == _lastSound.GetY)
+            _lastSound = null;
+    }
+
     public void RegisterSound(SoundMessage message)
     {
         var logger = Logger.GetInstance;
         logger.Log($"{Name} Heard {message.GetMessage} From ({message.GetX}, {message.GetY}), {message.GetDist} Tiles Away");
+        _lastSound = message;
+        RefreshDestination();
     }
     
 }

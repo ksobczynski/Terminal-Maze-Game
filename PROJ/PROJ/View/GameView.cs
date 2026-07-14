@@ -150,6 +150,12 @@ public class GameView
         {
             if (moveResult._success)
                 BoardView.MoveRender(moveResult);
+
+            if (moveResult.RefreshPlayerVitals)
+                _vitalsBox?.DisplayVitals();
+
+            if (moveResult.PlayerDead)
+                Apply(new GameEndResult(false));
         }
 
         _fightBox?.Render(results[0].NearbyEnemy);
